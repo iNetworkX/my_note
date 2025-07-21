@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 	"syscall"
 
 	"golang.org/x/term"
@@ -21,40 +22,35 @@ func readPassword(prompt string) (string, error) {
 
 func main() {
 	var (
-		save     = flag.String("save", "", "Save a new note")
-		find     = flag.String("find", "", "Find notes containing text")
-		list     = flag.Bool("list", false, "List all notes")
-		password = flag.Bool("password", false, "Set or change password")
+		save     = flag.Bool("save", false, "Save a new note")
+		open     = flag.Bool("open", false, "Open and read a note")
+		title    = flag.String("title", "", "Title for the note (required with --save or --open)")
+		find     = flag.String("find", "", "Find notes by title")
+		list     = flag.Bool("list", false, "List all note titles")
+		password = flag.Bool("password", false, "Show password info (deprecated)")
 		help     = flag.Bool("help", false, "Show help")
 	)
 
 	flag.Parse()
 
-	if *help || (!*list && *save == "" && *find == "" && !*password) {
+	if *help || (!*list && !*save && *find == "" && !*password && !*open) {
 		fmt.Println("Note CLI - Secure note-taking application")
 		fmt.Println("\nUsage:")
-		fmt.Println("  note --save \"Your note content\"    Save a new note")
-		fmt.Println("  note --find \"search term\"          Find notes containing text")
-		fmt.Println("  note --list                        List all notes")
-		fmt.Println("  note --password                    Set or change password")
-		fmt.Println("  note --help                        Show this help")
+		fmt.Println("  note -save -title \"my_note\" \"Your note content\"     Save a new note")
+		fmt.Println("  note -open -title \"my_note\"                         Open and read a note")
+		fmt.Println("  note -find \"title\"                                   Find notes by title")
+		fmt.Println("  note -list                                           List all note titles")
+		fmt.Println("  note -password                                       Show password info (deprecated)")
+		fmt.Println("  note -help                                           Show this help")
+		fmt.Println("  note -h                                              Show flag usage")
 		os.Exit(0)
 	}
 
 	notes := NewNotesManager()
 
 	if *password {
-		handlePasswordChange(notes)
-		return
-	}
-
-	if !notes.IsInitialized() {
-		fmt.Println("First time setup - please set a password for your notes.")
-		if err := setupInitialPassword(notes); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Println("Password set successfully. You can now start saving notes.")
+		fmt.Println("Password management is not needed with the new title-based system.")
+		fmt.Println("Each note can use a different password.")
 		return
 	}
 
@@ -65,12 +61,39 @@ func main() {
 	}
 
 	switch {
-	case *save != "":
-		if err := notes.AddNote(*save, pass); err != nil {
+	case *save:
+		if *title == "" {
+			fmt.Fprintf(os.Stderr, "Error: -title is required when using -save\n")
+			os.Exit(1)
+		}
+		
+		// Get content from remaining arguments
+		args := flag.Args()
+		if len(args) == 0 {
+			fmt.Fprintf(os.Stderr, "Error: content is required when using -save\n")
+			fmt.Fprintf(os.Stderr, "Usage: note -save -title \"your_title\" \"your content here\"\n")
+			os.Exit(1)
+		}
+		content := strings.Join(args, "\n")
+		
+		if err := notes.AddNote(*title, content, pass); err != nil {
 			fmt.Fprintf(os.Stderr, "Error saving note: %v\n", err)
 			os.Exit(1)
 		}
-		fmt.Println("Note saved successfully.")
+		fmt.Printf("Note saved successfully with title: %s\n", *title)
+
+	case *open:
+		if *title == "" {
+			fmt.Fprintf(os.Stderr, "Error: -title is required when using -open\n")
+			os.Exit(1)
+		}
+		content, err := notes.GetNoteContent(*title, pass)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error opening note: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("Title: %s\n", *title)
+		fmt.Printf("Content:\n%s\n", content)
 
 	case *find != "":
 		results, err := notes.FindNotes(*find, pass)
@@ -79,95 +102,27 @@ func main() {
 			os.Exit(1)
 		}
 		if len(results) == 0 {
-			fmt.Println("No notes found containing:", *find)
+			fmt.Printf("No notes found with title containing: %s\n", *find)
 		} else {
-			fmt.Printf("Found %d note(s):\n", len(results))
-			for _, note := range results {
-				fmt.Println(note)
+			fmt.Printf("Found %d note(s) with matching title:\n", len(results))
+			for _, title := range results {
+				fmt.Printf("  - %s\n", title)
 			}
 		}
 
 	case *list:
-		allNotes, err := notes.ListAllNotes(pass)
+		titles, err := notes.ListAllNotes(pass)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error listing notes: %v\n", err)
 			os.Exit(1)
 		}
-		if len(allNotes) == 0 {
+		if len(titles) == 0 {
 			fmt.Println("No notes found.")
 		} else {
-			fmt.Printf("Total notes: %d\n", len(allNotes))
-			for _, note := range allNotes {
-				fmt.Println(note)
+			fmt.Printf("Available notes (%d):\n", len(titles))
+			for _, title := range titles {
+				fmt.Printf("  - %s\n", title)
 			}
 		}
 	}
-}
-
-func setupInitialPassword(notes *NotesManager) error {
-	pass1, err := readPassword("Enter new password: ")
-	if err != nil {
-		return err
-	}
-
-	pass2, err := readPassword("Confirm password: ")
-	if err != nil {
-		return err
-	}
-
-	if pass1 != pass2 {
-		return fmt.Errorf("passwords do not match")
-	}
-
-	if len(pass1) < 4 {
-		return fmt.Errorf("password must be at least 4 characters long")
-	}
-
-	return notes.Initialize(pass1)
-}
-
-func handlePasswordChange(notes *NotesManager) {
-	if !notes.IsInitialized() {
-		if err := setupInitialPassword(notes); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Println("Password set successfully.")
-		return
-	}
-
-	oldPass, err := readPassword("Enter current password: ")
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error reading password: %v\n", err)
-		os.Exit(1)
-	}
-
-	newPass1, err := readPassword("Enter new password: ")
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error reading password: %v\n", err)
-		os.Exit(1)
-	}
-
-	newPass2, err := readPassword("Confirm new password: ")
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error reading password: %v\n", err)
-		os.Exit(1)
-	}
-
-	if newPass1 != newPass2 {
-		fmt.Fprintf(os.Stderr, "Error: passwords do not match\n")
-		os.Exit(1)
-	}
-
-	if len(newPass1) < 4 {
-		fmt.Fprintf(os.Stderr, "Error: password must be at least 4 characters long\n")
-		os.Exit(1)
-	}
-
-	if err := notes.ChangePassword(oldPass, newPass1); err != nil {
-		fmt.Fprintf(os.Stderr, "Error changing password: %v\n", err)
-		os.Exit(1)
-	}
-
-	fmt.Println("Password changed successfully.")
 }

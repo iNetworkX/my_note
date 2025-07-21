@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"strings"
 	"time"
 )
 
@@ -16,64 +15,78 @@ func NewNotesManager() *NotesManager {
 	}
 }
 
-func (n *NotesManager) Initialize(password string) error {
-	return n.storage.InitializeFile(password)
-}
-
 func (n *NotesManager) IsInitialized() bool {
-	return n.storage.FileExists()
+	return n.storage.IsInitialized()
 }
 
-func (n *NotesManager) AddNote(note string, password string) error {
-	content, err := n.storage.LoadNotes(password)
-	if err != nil {
-		return err
-	}
-
+func (n *NotesManager) AddNote(title string, note string, password string) error {
 	timestamp := time.Now().Format("2006-01-02 15:04:05")
-	newNote := fmt.Sprintf("[%s] %s\n", timestamp, note)
-
-	updatedContent := append(content, []byte(newNote)...)
-	return n.storage.SaveNotes(updatedContent, password)
+	content := fmt.Sprintf("[%s]\n%s", timestamp, note)
+	
+	return n.storage.SaveNote(title, []byte(content), password)
 }
 
-func (n *NotesManager) FindNotes(searchTerm string, password string) ([]string, error) {
-	content, err := n.storage.LoadNotes(password)
+func (n *NotesManager) FindNotes(titleSearch string, password string) ([]string, error) {
+	titles, err := n.storage.ListTitles()
 	if err != nil {
 		return nil, err
 	}
 
-	allNotes := strings.Split(string(content), "\n")
-	var matchingNotes []string
-
-	searchLower := strings.ToLower(searchTerm)
-	for _, note := range allNotes {
-		if note != "" && strings.Contains(strings.ToLower(note), searchLower) {
-			matchingNotes = append(matchingNotes, note)
+	var matchingTitles []string
+	for _, title := range titles {
+		// Case-insensitive title search
+		if containsIgnoreCase(title, titleSearch) {
+			matchingTitles = append(matchingTitles, title)
 		}
 	}
 
-	return matchingNotes, nil
+	return matchingTitles, nil
 }
 
 func (n *NotesManager) ListAllNotes(password string) ([]string, error) {
-	content, err := n.storage.LoadNotes(password)
-	if err != nil {
-		return nil, err
-	}
-
-	allNotes := strings.Split(string(content), "\n")
-	var notes []string
-
-	for _, note := range allNotes {
-		if note != "" {
-			notes = append(notes, note)
-		}
-	}
-
-	return notes, nil
+	return n.storage.ListTitles()
 }
 
-func (n *NotesManager) ChangePassword(oldPassword, newPassword string) error {
-	return n.storage.ChangePassword(oldPassword, newPassword)
+func (n *NotesManager) GetNoteContent(title string, password string) (string, error) {
+	content, err := n.storage.LoadNote(title, password)
+	if err != nil {
+		return "", err
+	}
+	return string(content), nil
+}
+
+func (n *NotesManager) DeleteNote(title string, password string) error {
+	// Verify password by trying to load the note first
+	_, err := n.storage.LoadNote(title, password)
+	if err != nil {
+		return err
+	}
+	return n.storage.DeleteNote(title)
+}
+
+// Helper function for case-insensitive string contains
+func containsIgnoreCase(s, substr string) bool {
+	s, substr = toLower(s), toLower(substr)
+	return contains(s, substr)
+}
+
+func toLower(s string) string {
+	result := make([]byte, len(s))
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if 'A' <= c && c <= 'Z' {
+			c += 'a' - 'A'
+		}
+		result[i] = c
+	}
+	return string(result)
+}
+
+func contains(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
 }
